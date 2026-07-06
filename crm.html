@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-width=1.0">
+    <title>MiniBot CRM</title>
+    <style>
+        body { font-family: sans-serif; margin: 2rem; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
+        th { background: #eee; }
+        .pending { color: orange; font-weight: bold; }
+        .confirmed { color: green; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>CRM MiniBot - Solicitudes</h1>
+    <button onclick="cargarDatos()">Recargar Datos</button>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Contacto</th>
+                <th>Producto</th>
+                <th>Estado</th>
+                <th>Evento ID</th>
+                <th>Fecha</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-body">
+            <!-- Datos dinámicos -->
+        </tbody>
+    </table>
+
+    <script>
+        async function cargarDatos() {
+            try {
+                const res = await fetch('/api/solicitudes');
+                const datos = await res.json();
+                
+                const tbody = document.getElementById('tabla-body');
+                tbody.innerHTML = '';
+                
+                datos.forEach(row => {
+                    const tr = document.createElement('tr');
+                    
+                    const claseEstado = row.estado === 'confirmada' ? 'confirmed' : 'pending';
+                    
+                    tr.innerHTML = `
+                        <td>${row.id}</td>
+                        <td>${row.telefono} (${row.nombre || 'Sin nombre'})</td>
+                        <td>${row.producto}</td>
+                        <td class="${claseEstado}">${row.estado.toUpperCase()}</td>
+                        <td>${row.evento_id || '-'}</td>
+                        <td>${row.creado_en}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (err) {
+                console.error('Error al cargar datos:', err);
+            }
+        }
+
+        // Cargar al inicio
+        cargarDatos();
+    </script>
+</body>
+</html>
