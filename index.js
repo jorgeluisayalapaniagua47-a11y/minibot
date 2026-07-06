@@ -89,7 +89,7 @@ app.post('/messages', async (req, res) => {
         // Máquina de estados
         switch (s.paso) {
             case 0:
-                reply = `¡Hola! Bienvenido a CinemaBot. Elige el número del género que te apetece ver hoy:\n1. Acción 💥\n2. Ciencia Ficción 👽\n3. Drama/Suspenso 🎭`;
+                reply = `¡Hola! Bienvenido a CinemaBot. Elige el número del género que te apetece ver hoy:\n1. Acción \n2. Ciencia Ficción \n3. Drama/Suspenso 🎭`;
                 nextPaso = 1;
                 break;
             case 1:
@@ -101,8 +101,22 @@ app.post('/messages', async (req, res) => {
                     await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-101', 'pending']);
                     
                     nextPaso = 2; 
-                } else if (text === "2" || text === "3") {
-                    reply = "Todavía no tenemos películas para ese género. Elige 1 por favor.";
+                } else if (text === "3") {
+                    reply = `¡Excelente elección! Tu recomendación es:\nShutter Island (La isla siniestra)\n\nSinopsis: En 1954, el alguacil Teddy Daniels es asignado para investigar la desaparición de una paciente de un hospital psiquiátrico en una isla remota.\nPóster oficial: imagen\nGeneramos tu Solicitud de Entrada: REQ-103 (Estado: PENDIENTE).\nPara confirmar tu ticket, simula la confirmación externa enviando el ID de solicitud al webhook.`;
+                    image = '/img/shutterisland.jpg';
+                    
+                    // Crear solicitud pendiente
+                    await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-103', 'pending']);
+                    
+                    nextPaso = 2; 
+                } else if (text === "2") {
+                    reply = `¡Excelente elección! Tu recomendación es:\nInterstellar\n\nSinopsis: Un grupo de exploradores hace uso de un agujero de gusano recientemente descubierto para superar las limitaciones de los viajes espaciales humanos y vencer las inmensas distancias de un viaje interestelar.\nPóster oficial: imagen\nGeneramos tu Solicitud de Entrada: REQ-102 (Estado: PENDIENTE).\nPara confirmar tu ticket, simula la confirmación externa enviando el ID de solicitud al webhook.`;
+                    image = '/img/interstellar.jpg';
+                    
+                    // Crear solicitud pendiente
+                    await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-102', 'pending']);
+                    
+                    nextPaso = 2; 
                 } else {
                     reply = `Opción no válida. Por favor, selecciona 1, 2 o 3 para poder recomendarte una película de nuestro catálogo.`;
                 }
