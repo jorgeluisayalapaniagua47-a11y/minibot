@@ -10,13 +10,13 @@ app.use('/img', express.static(path.join(__dirname, 'img')));
 const db = new sqlite3.Database('minibot.db');
 
 db.serialize(() => {
-    db.run(`CREATE TABLE contactos (
+    db.run(`CREATE TABLE IF NOT EXISTS contactos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telefono TEXT UNIQUE,
         nombre TEXT,
         creado_en DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
-    db.run(`CREATE TABLE mensajes (
+    db.run(`CREATE TABLE IF NOT EXISTS mensajes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contacto_id INTEGER,
         direccion TEXT,
@@ -25,7 +25,7 @@ db.serialize(() => {
         paso INTEGER,
         creado_en DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
-    db.run(`CREATE TABLE solicitudes (
+    db.run(`CREATE TABLE IF NOT EXISTS solicitudes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contacto_id INTEGER,
         producto TEXT,
@@ -75,7 +75,7 @@ app.post('/messages', async (req, res) => {
     const s = sesiones[from] ?? { paso: 0 };
     
     // Revisar si está bloqueado por una solicitud pendiente
-    const pendingReq = await dbGet('SELECT * FROM solicitudes WHERE contacto_id = ? AND estado = ?', [contacto.id, 'pending']);
+    const pendingReq = await dbGet('SELECT * FROM solicitudes WHERE contacto_id = ? AND estado = ?', [contacto.id, 'Pendiente']);
 
     let reply = "";
     let image = null;
@@ -89,7 +89,7 @@ app.post('/messages', async (req, res) => {
         // Máquina de estados
         switch (s.paso) {
             case 0:
-                reply = `¡Hola! Bienvenido a CinemaBot. Elige el número del género que te apetece ver hoy:\n1. Acción \n2. Ciencia Ficción \n3. Drama/Suspenso 🎭`;
+                reply = `¡Hola! Bienvenido a CinemaBot 🍿. Elige el número del género que te apetece ver hoy:\n1. Acción 💥\n2. Ciencia Ficción 👽\n3. Drama/Suspenso 🎭`;
                 nextPaso = 1;
                 break;
             case 1:
@@ -98,15 +98,7 @@ app.post('/messages', async (req, res) => {
                     image = '/img/madmax.jpg';
                     
                     // Crear solicitud pendiente
-                    await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-101', 'pending']);
-                    
-                    nextPaso = 2; 
-                } else if (text === "3") {
-                    reply = `¡Excelente elección! Tu recomendación es:\nShutter Island (La isla siniestra)\n\nSinopsis: En 1954, el alguacil Teddy Daniels es asignado para investigar la desaparición de una paciente de un hospital psiquiátrico en una isla remota.\nPóster oficial: imagen\nGeneramos tu Solicitud de Entrada: REQ-103 (Estado: PENDIENTE).\nPara confirmar tu ticket, simula la confirmación externa enviando el ID de solicitud al webhook.`;
-                    image = '/img/shutterisland.jpg';
-                    
-                    // Crear solicitud pendiente
-                    await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-103', 'pending']);
+                    await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-101', 'Pendiente']);
                     
                     nextPaso = 2; 
                 } else if (text === "2") {
@@ -114,7 +106,15 @@ app.post('/messages', async (req, res) => {
                     image = '/img/interstellar.jpg';
                     
                     // Crear solicitud pendiente
-                    await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-102', 'pending']);
+                    await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-102', 'Pendiente']);
+                    
+                    nextPaso = 2; 
+                } else if (text === "3") {
+                    reply = `¡Excelente elección! Tu recomendación es:\nShutter Island (La isla siniestra)\n\nSinopsis: En 1954, el alguacil Teddy Daniels es asignado para investigar la desaparición de una paciente de un hospital psiquiátrico en una isla remota.\nPóster oficial: imagen\nGeneramos tu Solicitud de Entrada: REQ-103 (Estado: PENDIENTE).\nPara confirmar tu ticket, simula la confirmación externa enviando el ID de solicitud al webhook.`;
+                    image = '/img/shutterisland.jpg';
+                    
+                    // Crear solicitud pendiente
+                    await dbRun('INSERT INTO solicitudes (contacto_id, producto, estado) VALUES (?, ?, ?)', [contacto.id, 'REQ-103', 'Pendiente']);
                     
                     nextPaso = 2; 
                 } else {
@@ -124,11 +124,11 @@ app.post('/messages', async (req, res) => {
             case 2:
                 // Si estaba en paso 2 pero pendingReq es falso (fue confirmada por webhook)
                 // Reiniciamos al paso 0 y respondemos como paso 0
-                reply = `¡Hola! Bienvenido a CinemaBot . Elige el número del género que te apetece ver hoy:\n1. Acción \n2. Ciencia Ficción \n3. Drama/Suspenso `;
+                reply = `¡Hola! Bienvenido a CinemaBot 🍿. Elige el número del género que te apetece ver hoy:\n1. Acción 💥\n2. Ciencia Ficción 👽\n3. Drama/Suspenso 🎭`;
                 nextPaso = 1;
                 break;
             default:
-                reply = `¡Hola! Bienvenido a CinemaBot . Elige el número del género que te apetece ver hoy:\n1. Acción \n2. Ciencia Ficción \n3. Drama/Suspenso `;
+                reply = `¡Hola! Bienvenido a CinemaBot 🍿. Elige el número del género que te apetece ver hoy:\n1. Acción 💥\n2. Ciencia Ficción 👽\n3. Drama/Suspenso 🎭`;
                 nextPaso = 1;
                 break;
         }
@@ -170,7 +170,7 @@ app.post('/webhook/confirmacion', async (req, res) => {
         }
 
         // Actualizar estado a confirmada
-        const result = await dbRun('UPDATE solicitudes SET estado = ?, evento_id = ? WHERE id = ?', ['confirmada', evento_id, solicitud_id]);
+        const result = await dbRun('UPDATE solicitudes SET estado = ?, evento_id = ? WHERE id = ?', ['Confirmado', evento_id, solicitud_id]);
         
         if (result.changes === 0) {
              return res.status(404).json({ error: 'solicitud no encontrada' });
