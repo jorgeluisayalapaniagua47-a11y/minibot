@@ -25,6 +25,7 @@
                 <th>Estado</th>
                 <th>Evento ID</th>
                 <th>Fecha</th>
+                <th>Acción</th>
             </tr>
         </thead>
         <tbody id="tabla-body">
@@ -44,7 +45,13 @@
                 datos.forEach(row => {
                     const tr = document.createElement('tr');
                     
-                    const claseEstado = row.estado === 'Confirmado' ? 'confirmed' : 'pending';
+                    const claseEstado = row.estado === 'Confirmado' ? 'confirmed' : row.estado === 'Expirado' ? '' : 'pending';
+                    
+                    const botonAccion = row.estado === 'Confirmado' 
+                        ? `<button disabled style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; padding:4px 8px; border-radius:4px; font-weight:bold;">Pago Confirmado</button>` 
+                        : row.estado === 'Expirado'
+                        ? `<button disabled style="background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; padding:4px 8px; border-radius:4px; font-weight:bold;">Expirado</button>`
+                        : `<button onclick="simularPago(${row.id})" style="background:#22c55e; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">Simular Pago</button>`;
                     
                     tr.innerHTML = `
                         <td>${row.id}</td>
@@ -53,11 +60,38 @@
                         <td class="${claseEstado}">${row.estado.toUpperCase()}</td>
                         <td>${row.evento_id || '-'}</td>
                         <td>${row.creado_en}</td>
+                        <td>${botonAccion}</td>
                     `;
                     tbody.appendChild(tr);
                 });
             } catch (err) {
                 console.error('Error al cargar datos:', err);
+            }
+        }
+
+        async function simularPago(solicitudId) {
+            const numEvento = 'sim_pay_' + Math.floor(Math.random() * 1000000);
+            try {
+                const res = await fetch('/webhook/confirmacion', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-webhook-secret': 'abc123'
+                    },
+                    body: JSON.stringify({
+                        evento_id: numEvento,
+                        solicitud_id: solicitudId
+                    })
+                });
+                const result = await res.json();
+                if (res.ok) {
+                    alert('Pago simulado con éxito (Evento: ' + numEvento + ')');
+                    cargarDatos();
+                } else {
+                    alert('Error al simular pago: ' + (result.error || 'Desconocido'));
+                }
+            } catch (err) {
+                alert('Error de conexión: ' + err.message);
             }
         }
 

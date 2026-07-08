@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/jorgeluisayalapaniagua47-a11y/minibot#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.1",
     "express": "^5.2.1",
     "sqlite3": "^6.0.1"
   }
