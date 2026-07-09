@@ -1,3 +1,5 @@
+
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const supabase = require('./db');
@@ -11,6 +13,7 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const API_VERSION = process.env.API_VERSION || 'v21.0';
 const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'abc123';
 
 // ----------------------------------------------------
 // FUNCIONES DE AYUDA (SUPABASE)
@@ -88,6 +91,53 @@ async function enviarImagenWhatsApp(telefono, urlParcial, pieFoto, hostname, req
 // ----------------------------------------------------
 // 1. VERIFICACIÓN DEL WEBHOOK DE META (GET)
 // ----------------------------------------------------
+app.post('/messages', async (req, res) => {
+    const { from, text } = req.body || {};
+    if (!from || !text) {
+        return res.status(400).json({ error: 'Faltan from o text' });
+    }
+
+    const body = {
+        object: 'whatsapp_business_account',
+        entry: [{
+            id: 'local-entry',
+            changes: [{ value: { messages: [{
+                from,
+                id: `local_${Date.now()}`,
+                text: { body: text.trim() },
+                profile: { name: 'Usuario Local' }
+            }] } }]
+        }]
+    };
+
+    const originalUrl = req.url;
+    const originalOriginalUrl = req.originalUrl || req.url;
+
+    req.body = body;
+    req.url = '/webhook';
+    req.originalUrl = '/webhook';
+    req.headers = req.headers || {};
+    req.headers.host = req.headers.host || 'localhost:3000';
+
+    try {
+        await new Promise((resolve, reject) => {
+            app._router.handle(req, res, (err) => {
+                req.url = originalUrl;
+                req.originalUrl = originalOriginalUrl;
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        if (!res.headersSent) {
+            return res.json({ reply: 'Mensaje procesado por el bot', image: null });
+        }
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'error al simular mensaje' });
+    }
+});
+
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'] || req.query['hub_mode'];
     const token = req.query['hub.verify_token'] || req.query['hub_verify_token'];
@@ -369,22 +419,41 @@ app.post('/webhook', async (req, res) => {
 // 3. WEBHOOK ENDPOINT DE PAGOS
 // ----------------------------------------------------
 app.post('/webhook/confirmacion', async (req, res) => {
-    const { evento_id, reserva_id, metodo_pago = "TEST" } = req.body;
+    const providedSecret = req.get('x-webhook-secret');
+    if (WEBHOOK_SECRET && providedSecret !== WEBHOOK_SECRET) {
+        return res.status(401).json({ error: 'Secreto de webhook inválido' });
+    }
 
-    if (!evento_id || !reserva_id) {
+    const body = req.body || {};
+    const eventoId = body.evento_id || body.event_id || body.payment_id || body.eventId;
+    const reservaId = body.reserva_id || body.solicitud_id || body.reservaId || body.id;
+    const metodoPago = body.metodo_pago || body.metodoPago || body.metodo || 'TEST';
+
+    if (!eventoId || !reservaId) {
         return res.status(400).json({ error: 'Faltan evento_id o reserva_id' });
     }
 
+    const reservaIdNum = Number(reservaId);
+    if (!Number.isInteger(reservaIdNum) || reservaIdNum <= 0) {
+        return res.status(400).json({ error: 'reserva_id inválido' });
+    }
+
     try {
-        const { data: reserva } = await supabase.from('reservas').select('*').eq('id', reserva_id).single();
-        if (!reserva) return res.status(404).json({ error: 'reserva no encontrada' });
+        const { data: reserva, error: reservaErr } = await supabase.from('reservas').select('*').eq('id', reservaIdNum).single();
+
+        if (reservaErr) {
+            if (reservaErr.code === 'PGRST116') {
+                return res.status(404).json({ error: 'reserva no encontrada' });
+            }
+            throw reservaErr;
+        }
 
         const creadoEn = new Date(reserva.creado_en + 'Z');
         const diffMins = (new Date() - creadoEn) / 1000 / 60;
 
         if (reserva.estado === 'CANCELADA' || diffMins > 10) {
             if (reserva.estado === 'PENDIENTE') {
-                await supabase.from('reservas').update({ estado: 'CANCELADA' }).eq('id', reserva_id);
+                await supabase.from('reservas').update({ estado: 'CANCELADA' }).eq('id', reservaIdNum);
                 const { data: f } = await supabase.from('funciones').select('capacidad_disponible').eq('id', reserva.funcion_id).single();
                 await supabase.from('funciones').update({ capacidad_disponible: f.capacidad_disponible + reserva.cantidad_entradas }).eq('id', reserva.funcion_id);
             }
@@ -393,19 +462,21 @@ app.post('/webhook/confirmacion', async (req, res) => {
 
         // Idempotencia de Pagos
         const { error: pagoErr } = await supabase.from('pagos').insert([{
-            reserva_id: reserva_id,
-            evento_id: evento_id,
-            metodo_pago: metodo_pago,
+            reserva_id: reservaIdNum,
+            evento_id: eventoId,
+            metodo_pago: metodoPago,
             monto: reserva.monto_total,
             estado: 'APROBADO'
         }]);
 
         if (pagoErr) {
-            if (pagoErr.code === '23505') return res.json({ ok: true, duplicado: true });
+            if (pagoErr.code === '23505') {
+                return res.json({ ok: true, duplicado: true, reserva_id: reservaIdNum, evento_id: eventoId });
+            }
             throw pagoErr;
         }
 
-        await supabase.from('reservas').update({ estado: 'CONFIRMADA' }).eq('id', reserva_id);
+        await supabase.from('reservas').update({ estado: 'CONFIRMADA' }).eq('id', reservaIdNum);
 
         const { data: contacto } = await supabase.from('contactos').select('*').eq('id', reserva.contacto_id).single();
         const { data: funcion } = await supabase.from('funciones').select('*, peliculas(titulo)').eq('id', reserva.funcion_id).single();
@@ -421,14 +492,14 @@ Horario:  ${fh}
 Entradas: ${reserva.cantidad_entradas} boletos
 Total:    $${reserva.monto_total}
 Estado:   CONFIRMADO ✅
-Pago ID:  ${evento_id}
+Pago ID:  ${eventoId}
 ========================================`;
 
             const mensajeExito = `¡Pago exitoso! Tu compra ha sido confirmada.\n\n${voucher}\n\nEscribe cualquier cosa para volver al menú principal.`;
 
             await supabase.from('contactos').update({ estado_conversacion: 'WELCOME', contexto_json: {} }).eq('id', contacto.id);
 
-            const hostname = req.headers.host;
+            const hostname = req.headers.host || 'localhost:3000';
             await enviarMensajeWhatsApp(contacto.wa_id, mensajeExito, hostname, req);
 
             await supabase.from('mensajes').insert([{
@@ -440,10 +511,10 @@ Pago ID:  ${evento_id}
             }]);
         }
 
-        res.json({ ok: true, duplicado: false });
+        res.json({ ok: true, duplicado: false, reserva_id: reservaIdNum, evento_id: eventoId });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'error interno' });
+        res.status(500).json({ error: 'error interno', detalle: err.message });
     }
 });
 
@@ -451,28 +522,42 @@ Pago ID:  ${evento_id}
 // 4. CRM DASHBOARD PANEL
 // ----------------------------------------------------
 app.get('/api/solicitudes', async (req, res) => {
-    // Left Join a través de las foreign keys en Supabase
     const { data: reservas, error } = await supabase
         .from('reservas')
         .select(`
             *,
             contactos (wa_id, nombre_perfil),
-            funciones (fecha_hora, peliculas (titulo))
+            funciones (fecha_hora, peliculas (titulo)),
+            pagos (evento_id, estado, creado_en)
         `)
         .order('id', { ascending: false });
 
     if (error) return res.status(500).json({ error: error.message });
 
     const mapped = reservas.map(row => {
-        const fh = new Date(row.funciones.fecha_hora + 'Z').toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        const funcion = row.funciones || {};
+        const pelicula = funcion.peliculas?.titulo || 'Sin película';
+        const fh = funcion.fecha_hora ? new Date(funcion.fecha_hora + 'Z').toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : 'Sin horario';
+        const pagos = Array.isArray(row.pagos) ? row.pagos : [];
+        const ultimoPago = pagos.slice().sort((a, b) => new Date(b.creado_en || 0) - new Date(a.creado_en || 0))[0];
+        const fechaCreacion = row.creado_en ? new Date(row.creado_en).toLocaleString('es-ES', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        }) : '-';
+
         return {
             ...row,
-            telefono: row.contactos.wa_id,
-            nombre: row.contactos.nombre_perfil,
+            telefono: row.contactos?.wa_id || 'Sin teléfono',
+            nombre: row.contactos?.nombre_perfil || 'Sin nombre',
             horario: fh,
-            pelicula: row.funciones.peliculas.titulo,
+            pelicula,
             cantidad: row.cantidad_entradas,
-            producto: `${row.funciones.peliculas.titulo} (${fh}) x ${row.cantidad_entradas} boletos`
+            producto: `${pelicula} (${fh}) x ${row.cantidad_entradas} boletos`,
+            evento_id: ultimoPago?.evento_id || '-',
+            fecha_formateada: fechaCreacion
         };
     });
     res.json(mapped);
