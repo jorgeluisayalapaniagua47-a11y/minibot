@@ -5,17 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-width=1.0">
     <title>MiniBot CRM</title>
     <style>
-        body { font-family: sans-serif; margin: 2rem; }
-        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-        th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
-        th { background: #eee; }
-        .pending { color: orange; font-weight: bold; }
-        .confirmed { color: green; font-weight: bold; }
+        body { font-family: sans-serif; margin: 2rem; background: #f8fafc; color: #0f172a; }
+        h1 { margin-bottom: 0.5rem; }
+        .panel { background: white; padding: 1rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+        button { border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button:disabled { opacity: 0.7; cursor: wait; }
+        .status { margin-top: 0.75rem; padding: 0.7rem 0.9rem; border-radius: 8px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; display: none; }
+        .status.error { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+        .status.success { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; background: white; border-radius: 10px; overflow: hidden; }
+        th, td { border: 1px solid #e2e8f0; padding: 0.7rem; text-align: left; }
+        th { background: #e2e8f0; }
+        .pending { color: #b45309; font-weight: bold; }
+        .confirmed { color: #15803d; font-weight: bold; }
+        .muted { color: #64748b; font-size: 0.9rem; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 0.85rem; }
     </style>
 </head>
 <body>
-    <h1>CRM MiniBot - Solicitudes</h1>
-    <button onclick="cargarDatos()">Recargar Datos</button>
+    <div class="panel">
+        <h1>CRM MiniBot - Solicitudes</h1>
+        <p class="muted">Simula el pago desde aquí y observa cómo se confirma automáticamente el estado y el evento.</p>
+        <button onclick="cargarDatos()">Recargar Datos</button>
+        <div id="status-message" class="status"></div>
+    </div>
     <table>
         <thead>
             <tr>
@@ -34,6 +47,14 @@
     </table>
 
     <script>
+        const statusMessage = document.getElementById('status-message');
+
+        function mostrarEstado(mensaje, tipo = 'success') {
+            statusMessage.textContent = mensaje;
+            statusMessage.className = `status ${tipo}`;
+            statusMessage.style.display = 'block';
+        }
+
         async function cargarDatos() {
             try {
                 const res = await fetch('/api/solicitudes');
@@ -45,21 +66,31 @@
                 datos.forEach(row => {
                     const tr = document.createElement('tr');
                     
-                    const claseEstado = row.estado === 'Confirmado' ? 'confirmed' : row.estado === 'Expirado' ? '' : 'pending';
+                    const estado = (row.estado || '').toUpperCase();
+                    const claseEstado = estado === 'CONFIRMADA' || estado === 'CONFIRMADO' ? 'confirmed' : estado === 'CANCELADA' || estado === 'EXPIRADO' ? '' : 'pending';
+                    const eventoVisible = row.evento_id && row.evento_id !== '-' ? row.evento_id : 'Sin evento';
                     
-                    const botonAccion = row.estado === 'Confirmado' 
+                    const botonAccion = estado === 'CONFIRMADA' || estado === 'CONFIRMADO'
                         ? `<button disabled style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; padding:4px 8px; border-radius:4px; font-weight:bold;">Pago Confirmado</button>` 
-                        : row.estado === 'Expirado'
+                        : estado === 'CANCELADA' || estado === 'EXPIRADO'
                         ? `<button disabled style="background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; padding:4px 8px; border-radius:4px; font-weight:bold;">Expirado</button>`
-                        : `<button onclick="simularPago(${row.id})" style="background:#22c55e; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">Simular Pago</button>`;
+                        : `<button onclick="simularPago(${row.id}, this)" style="background:#22c55e; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">Simular Pago</button>`;
                     
+                    const fechaCreacion = row.creado_en ? new Date(row.creado_en).toLocaleString('es-ES', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }) : '-';
+
                     tr.innerHTML = `
                         <td>${row.id}</td>
                         <td>${row.telefono} (${row.nombre || 'Sin nombre'})</td>
                         <td>${row.producto}</td>
-                        <td class="${claseEstado}">${row.estado.toUpperCase()}</td>
-                        <td>${row.evento_id || '-'}</td>
-                        <td>${row.creado_en}</td>
+                        <td class="${claseEstado}">${estado}</td>
+                        <td>${eventoVisible}</td>
+                        <td>${fechaCreacion}</td>
                         <td>${botonAccion}</td>
                     `;
                     tbody.appendChild(tr);
@@ -69,8 +100,15 @@
             }
         }
 
-        async function simularPago(solicitudId) {
+        async function simularPago(solicitudId, button) {
+            if (!button || button.dataset.processing === 'true') return;
+
             const numEvento = 'sim_pay_' + Math.floor(Math.random() * 1000000);
+            button.dataset.processing = 'true';
+            button.disabled = true;
+            button.textContent = 'Procesando...';
+            mostrarEstado('Procesando pago...', 'success');
+
             try {
                 const res = await fetch('/webhook/confirmacion', {
                     method: 'POST',
@@ -80,18 +118,25 @@
                     },
                     body: JSON.stringify({
                         evento_id: numEvento,
-                        solicitud_id: solicitudId
+                        reserva_id: solicitudId,
+                        metodo_pago: 'TEST'
                     })
                 });
                 const result = await res.json();
                 if (res.ok) {
-                    alert('Pago simulado con éxito (Evento: ' + numEvento + ')');
+                    mostrarEstado('Pago confirmado correctamente. ' + numEvento, 'success');
                     cargarDatos();
                 } else {
-                    alert('Error al simular pago: ' + (result.error || 'Desconocido'));
+                    button.dataset.processing = 'false';
+                    button.disabled = false;
+                    button.textContent = 'Simular Pago';
+                    mostrarEstado('No se pudo confirmar el pago: ' + (result.error || 'Desconocido'), 'error');
                 }
             } catch (err) {
-                alert('Error de conexión: ' + err.message);
+                button.dataset.processing = 'false';
+                button.disabled = false;
+                button.textContent = 'Simular Pago';
+                mostrarEstado('Error de conexión: ' + err.message, 'error');
             }
         }
 
