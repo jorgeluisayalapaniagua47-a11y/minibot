@@ -35,11 +35,20 @@ async function getGenerosMenu() {
 // ----------------------------------------------------
 // FUNCIONES DE AYUDA DE LA API DE WHATSAPP CLOUD
 // ----------------------------------------------------
+function normalizarTelefonoWhatsApp(telefono) {
+    if (!telefono) return '';
+    const limpio = String(telefono).trim().replace(/\s+/g, '');
+    return limpio.startsWith('+') ? limpio : `+${limpio}`;
+}
+
 async function enviarMensajeWhatsApp(telefono, texto, hostname, req) {
+    const telefonoNormalizado = normalizarTelefonoWhatsApp(telefono);
+
     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-        console.warn(`[Modo Simulado] Enviando texto a ${telefono}: ${texto}`);
-        return;
+        console.warn(`[Modo Simulado] Enviando texto a ${telefonoNormalizado}: ${texto}`);
+        return { ok: false, simulado: true };
     }
+
     const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
     try {
         const res = await fetch(url, {
@@ -48,26 +57,33 @@ async function enviarMensajeWhatsApp(telefono, texto, hostname, req) {
             body: JSON.stringify({
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
-                to: telefono,
+                to: telefonoNormalizado,
                 type: "text",
                 text: { body: texto }
             })
         });
-        const data = await res.json();
-        if (data.error) console.error("Error API Meta (Mensaje):", data.error);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+            console.error("Error API Meta (Mensaje):", { status: res.status, details: data.error, to: telefonoNormalizado });
+            return { ok: false, error: data.error };
+        }
+        return { ok: true, data };
     } catch (e) {
         console.error("Error enviando mensaje WhatsApp:", e);
+        return { ok: false, error: e.message };
     }
 }
 
 async function enviarImagenWhatsApp(telefono, urlParcial, pieFoto, hostname, req) {
     const protocol = req.headers['x-forwarded-proto'] || 'http';
     const urlAbsoluta = `${protocol}://${hostname}${urlParcial}`;
+    const telefonoNormalizado = normalizarTelefonoWhatsApp(telefono);
 
     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-        console.warn(`[Modo Simulado] Enviando imagen a ${telefono}: ${urlAbsoluta}`);
-        return;
+        console.warn(`[Modo Simulado] Enviando imagen a ${telefonoNormalizado}: ${urlAbsoluta}`);
+        return { ok: false, simulado: true };
     }
+
     const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
     try {
         const res = await fetch(url, {
@@ -76,15 +92,20 @@ async function enviarImagenWhatsApp(telefono, urlParcial, pieFoto, hostname, req
             body: JSON.stringify({
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
-                to: telefono,
+                to: telefonoNormalizado,
                 type: "image",
                 image: { link: urlAbsoluta, caption: pieFoto }
             })
         });
-        const data = await res.json();
-        if (data.error) console.error("Error API Meta (Imagen):", data.error);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+            console.error("Error API Meta (Imagen):", { status: res.status, details: data.error, to: telefonoNormalizado });
+            return { ok: false, error: data.error };
+        }
+        return { ok: true, data };
     } catch (e) {
         console.error("Error enviando imagen WhatsApp:", e);
+        return { ok: false, error: e.message };
     }
 }
 
@@ -295,7 +316,7 @@ app.post('/webhook', async (req, res) => {
                             funciones.forEach((f, i) => {
                                 // Formatear fecha simple
                                 const fh = new Date(f.fecha_hora + 'Z').toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-                                reply += `${i + 1}. ${fh} (${f.capacidad_disponible} disponibles, $${f.precio_unitario})\n`;
+                                reply += `${i + 1}. ${fh} (${f.capacidad_disponible} disponibles, Bs ${f.precio_unitario})\n`;
                             });
                             reply += `0. ⬅️ Volver a selección de películas`;
                             image = p.imagen_url;
@@ -372,7 +393,7 @@ app.post('/webhook', async (req, res) => {
                             }]).select().single();
 
                             const fh = new Date(funcion.fecha_hora + 'Z').toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-                            reply = `¡Reserva generada con éxito!\n\n🎬 ${pelicula.titulo}\n🕒 ${fh}\n🎟️ ${cantidad} boletos\n💰 Total: $${total}\n\nTienes 10 minutos para pagar.\n*(Simula POST a /webhook/confirmacion con reserva_id: ${resIns.id})*`;
+                            reply = `¡Reserva generada con éxito!\n\n🎬 ${pelicula.titulo}\n🕒 ${fh}\n🎟️ ${cantidad} boletos\n💰 Total: Bs ${total}\n\nTienes 10 minutos para pagar.\n*(Simula POST a /webhook/confirmacion con reserva_id: ${resIns.id})*`;
                             nextEstado = 'PENDIENTE_PAGO';
                         }
                     }
@@ -418,6 +439,102 @@ app.post('/webhook', async (req, res) => {
 // ----------------------------------------------------
 // 3. WEBHOOK ENDPOINT DE PAGOS
 // ----------------------------------------------------
+async function confirmarPagoReserva({ reservaIdNum, eventoId, metodoPago, req }) {
+    const { data: reserva, error: reservaErr } = await supabase.from('reservas').select('*').eq('id', reservaIdNum).single();
+
+    if (reservaErr) {
+        if (reservaErr.code === 'PGRST116') {
+            return { ok: false, status: 404, error: 'reserva no encontrada' };
+        }
+        throw reservaErr;
+    }
+
+    if (reserva.estado === 'CONFIRMADA') {
+        return { ok: true, duplicado: true, reserva_id: reservaIdNum, evento_id: eventoId, estado: 'CONFIRMADA' };
+    }
+
+    const creadoEn = new Date(reserva.creado_en + 'Z');
+    const diffMins = (new Date() - creadoEn) / 1000 / 60;
+
+    if (reserva.estado === 'CANCELADA' || diffMins > 10) {
+        if (reserva.estado === 'PENDIENTE') {
+            await supabase.from('reservas').update({ estado: 'CANCELADA' }).eq('id', reservaIdNum);
+            const { data: f } = await supabase.from('funciones').select('capacidad_disponible').eq('id', reserva.funcion_id).single();
+            await supabase.from('funciones').update({ capacidad_disponible: f.capacidad_disponible + reserva.cantidad_entradas }).eq('id', reserva.funcion_id);
+        }
+        return { ok: false, status: 400, error: 'la reserva ha expirado o fue cancelada' };
+    }
+
+    const { data: pagosAprobados, error: pagosCheckErr } = await supabase
+        .from('pagos')
+        .select('id')
+        .eq('reserva_id', reservaIdNum)
+        .eq('estado', 'APROBADO')
+        .order('id', { ascending: false })
+        .limit(1);
+
+    if (pagosCheckErr) throw pagosCheckErr;
+    if (pagosAprobados && pagosAprobados.length > 0) {
+        await supabase.from('reservas').update({ estado: 'CONFIRMADA' }).eq('id', reservaIdNum);
+        return { ok: true, duplicado: true, reserva_id: reservaIdNum, evento_id: eventoId, estado: 'CONFIRMADA' };
+    }
+
+    const { error: pagoErr } = await supabase.from('pagos').insert([{
+        reserva_id: reservaIdNum,
+        evento_id: eventoId,
+        metodo_pago: metodoPago,
+        monto: reserva.monto_total,
+        estado: 'APROBADO'
+    }]);
+
+    if (pagoErr) {
+        if (pagoErr.code === '23505') {
+            await supabase.from('reservas').update({ estado: 'CONFIRMADA' }).eq('id', reservaIdNum);
+            return { ok: true, duplicado: true, reserva_id: reservaIdNum, evento_id: eventoId, estado: 'CONFIRMADA' };
+        }
+        throw pagoErr;
+    }
+
+    await supabase.from('reservas').update({ estado: 'CONFIRMADA' }).eq('id', reservaIdNum);
+
+    const { data: contacto } = await supabase.from('contactos').select('*').eq('id', reserva.contacto_id).single();
+    const { data: funcion } = await supabase.from('funciones').select('*, peliculas(titulo)').eq('id', reserva.funcion_id).single();
+
+    if (contacto && funcion) {
+        const fh = new Date(funcion.fecha_hora + 'Z').toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        const voucher = `========================================
+       🎟️ VOUCHER DE CINEMABOT 🎟️
+========================================
+Película: ${funcion.peliculas.titulo}
+Horario:  ${fh}
+Entradas: ${reserva.cantidad_entradas} boletos
+Total:    Bs ${reserva.monto_total}
+Estado:   CONFIRMADO ✅
+Pago ID:  ${eventoId}
+========================================`;
+
+        const mensajeExito = `¡Pago exitoso! Tu compra ha sido confirmada.\n\n${voucher}\n\nEscribe cualquier cosa para volver al menú principal.`;
+
+        await supabase.from('contactos').update({ estado_conversacion: 'WELCOME', contexto_json: {} }).eq('id', contacto.id);
+
+        const hostname = req.headers.host || 'localhost:3000';
+        const envioWhatsApp = await enviarMensajeWhatsApp(contacto.wa_id, mensajeExito, hostname, req);
+        if (!envioWhatsApp.ok) {
+            console.warn(`[Confirmación] No se pudo enviar el voucher por WhatsApp para la reserva ${reservaIdNum}.`, envioWhatsApp);
+        }
+
+        await supabase.from('mensajes').insert([{
+            contacto_id: contacto.id,
+            direccion: 'out',
+            wa_message_id: 'local_voucher_' + Date.now(),
+            tipo_mensaje: 'text',
+            contenido: mensajeExito
+        }]);
+    }
+
+    return { ok: true, duplicado: false, reserva_id: reservaIdNum, evento_id: eventoId, estado: 'CONFIRMADA' };
+}
+
 app.post('/webhook/confirmacion', async (req, res) => {
     const providedSecret = req.get('x-webhook-secret');
     if (WEBHOOK_SECRET && providedSecret !== WEBHOOK_SECRET) {
@@ -439,79 +556,12 @@ app.post('/webhook/confirmacion', async (req, res) => {
     }
 
     try {
-        const { data: reserva, error: reservaErr } = await supabase.from('reservas').select('*').eq('id', reservaIdNum).single();
-
-        if (reservaErr) {
-            if (reservaErr.code === 'PGRST116') {
-                return res.status(404).json({ error: 'reserva no encontrada' });
-            }
-            throw reservaErr;
+        const resultado = await confirmarPagoReserva({ reservaIdNum, eventoId, metodoPago, req });
+        if (!resultado.ok) {
+            return res.status(resultado.status || 500).json({ error: resultado.error });
         }
 
-        const creadoEn = new Date(reserva.creado_en + 'Z');
-        const diffMins = (new Date() - creadoEn) / 1000 / 60;
-
-        if (reserva.estado === 'CANCELADA' || diffMins > 10) {
-            if (reserva.estado === 'PENDIENTE') {
-                await supabase.from('reservas').update({ estado: 'CANCELADA' }).eq('id', reservaIdNum);
-                const { data: f } = await supabase.from('funciones').select('capacidad_disponible').eq('id', reserva.funcion_id).single();
-                await supabase.from('funciones').update({ capacidad_disponible: f.capacidad_disponible + reserva.cantidad_entradas }).eq('id', reserva.funcion_id);
-            }
-            return res.status(400).json({ error: 'la reserva ha expirado o fue cancelada' });
-        }
-
-        // Idempotencia de Pagos
-        const { error: pagoErr } = await supabase.from('pagos').insert([{
-            reserva_id: reservaIdNum,
-            evento_id: eventoId,
-            metodo_pago: metodoPago,
-            monto: reserva.monto_total,
-            estado: 'APROBADO'
-        }]);
-
-        if (pagoErr) {
-            if (pagoErr.code === '23505') {
-                return res.json({ ok: true, duplicado: true, reserva_id: reservaIdNum, evento_id: eventoId });
-            }
-            throw pagoErr;
-        }
-
-        await supabase.from('reservas').update({ estado: 'CONFIRMADA' }).eq('id', reservaIdNum);
-
-        const { data: contacto } = await supabase.from('contactos').select('*').eq('id', reserva.contacto_id).single();
-        const { data: funcion } = await supabase.from('funciones').select('*, peliculas(titulo)').eq('id', reserva.funcion_id).single();
-
-        if (contacto && funcion) {
-            const fh = new Date(funcion.fecha_hora + 'Z').toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-            const voucher =
-                `========================================
-       🎟️ VOUCHER DE CINEMABOT 🎟️
-========================================
-Película: ${funcion.peliculas.titulo}
-Horario:  ${fh}
-Entradas: ${reserva.cantidad_entradas} boletos
-Total:    $${reserva.monto_total}
-Estado:   CONFIRMADO ✅
-Pago ID:  ${eventoId}
-========================================`;
-
-            const mensajeExito = `¡Pago exitoso! Tu compra ha sido confirmada.\n\n${voucher}\n\nEscribe cualquier cosa para volver al menú principal.`;
-
-            await supabase.from('contactos').update({ estado_conversacion: 'WELCOME', contexto_json: {} }).eq('id', contacto.id);
-
-            const hostname = req.headers.host || 'localhost:3000';
-            await enviarMensajeWhatsApp(contacto.wa_id, mensajeExito, hostname, req);
-
-            await supabase.from('mensajes').insert([{
-                contacto_id: contacto.id,
-                direccion: 'out',
-                wa_message_id: 'local_voucher_' + Date.now(),
-                tipo_mensaje: 'text',
-                contenido: mensajeExito
-            }]);
-        }
-
-        res.json({ ok: true, duplicado: false, reserva_id: reservaIdNum, evento_id: eventoId });
+        res.json({ ok: true, duplicado: resultado.duplicado, reserva_id: reservaIdNum, evento_id: eventoId, estado: resultado.estado });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'error interno', detalle: err.message });
