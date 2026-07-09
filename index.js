@@ -29,9 +29,7 @@ async function getGenerosMenu() {
     return menu;
 }
 
-// ----------------------------------------------------
 // FUNCIONES DE AYUDA DE LA API DE WHATSAPP CLOUD
-// ----------------------------------------------------
 async function enviarMensajeWhatsApp(telefono, texto, hostname, req) {
     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
         console.warn(`[Modo Simulado] Enviando texto a ${telefono}: ${texto}`);
@@ -85,9 +83,7 @@ async function enviarImagenWhatsApp(telefono, urlParcial, pieFoto, hostname, req
     }
 }
 
-// ----------------------------------------------------
 // 1. VERIFICACIÓN DEL WEBHOOK DE META (GET)
-// ----------------------------------------------------
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'] || req.query['hub_mode'];
     const token = req.query['hub.verify_token'] || req.query['hub_verify_token'];
@@ -99,9 +95,8 @@ app.get('/webhook', (req, res) => {
     return res.status(403).send("Prohibido");
 });
 
-// ----------------------------------------------------
+
 // 2. RECEPCIÓN DE MENSAJES (POST)
-// ----------------------------------------------------
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -115,9 +110,9 @@ app.post('/webhook', async (req, res) => {
     const wa_message_id = messageObj.id;
     const entryId = body.entry[0].id;
 
-    if (messageObj.from_user_id === entryId || !text) {
-        return res.status(200).send("EVENT_RECEIVED");
-    }
+    res.status(200).send("EVENT_RECEIVED");
+
+    if (messageObj.from_user_id === entryId || !text) return;
 
     try {
         // Upsert contacto
@@ -362,16 +357,10 @@ app.post('/webhook', async (req, res) => {
 
     } catch (err) {
         console.error("Error procesando Webhook:", err);
-    } finally {
-        if (!res.headersSent) {
-            res.status(200).send("EVENT_RECEIVED");
-        }
     }
 });
 
-// ----------------------------------------------------
 // 3. WEBHOOK ENDPOINT DE PAGOS
-// ----------------------------------------------------
 app.post('/webhook/confirmacion', async (req, res) => {
     const { evento_id, reserva_id, metodo_pago = "TEST" } = req.body;
 
@@ -451,11 +440,10 @@ Pago ID:  ${evento_id}
     }
 });
 
-// ----------------------------------------------------
+
 // 4. CRM DASHBOARD PANEL
-// ----------------------------------------------------
 app.get('/api/solicitudes', async (req, res) => {
-    // Left Join a través de las foreign keys en Supabase
+
     const { data: reservas, error } = await supabase
         .from('reservas')
         .select(`
@@ -485,9 +473,4 @@ app.get('/api/solicitudes', async (req, res) => {
 app.get('/crm', (req, res) => {
     res.sendFile(path.join(__dirname, 'crm.html'));
 });
-
-if (process.env.NODE_ENV !== 'production') {
-    app.listen(PORT, () => console.log(`MiniBot en http://localhost:${PORT}`));
-}
-
-module.exports = app;
+app.listen(PORT, () => console.log(`MiniBot en http://localhost:${PORT}`));
