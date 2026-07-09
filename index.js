@@ -238,7 +238,7 @@ app.post('/webhook', async (req, res) => {
                 .single();
 
             if (reserva) {
-                const creadoEn = new Date(reserva.creado_en + 'Z'); // Supabase devuelve timestamps UTC
+                const creadoEn = new Date(reserva.creado_en.endsWith('Z') || reserva.creado_en.includes('+') ? reserva.creado_en : reserva.creado_en + 'Z');
                 const diffMins = (new Date() - creadoEn) / 1000 / 60;
 
                 if (diffMins > 10) {
@@ -455,7 +455,7 @@ async function confirmarPagoReserva({ reservaIdNum, eventoId, metodoPago, req })
         return { ok: true, duplicado: true, reserva_id: reservaIdNum, evento_id: eventoId, estado: 'CONFIRMADA' };
     }
 
-    const creadoEn = new Date(reserva.creado_en + 'Z');
+    const creadoEn = new Date(reserva.creado_en.endsWith('Z') || reserva.creado_en.includes('+') ? reserva.creado_en : reserva.creado_en + 'Z');
     const diffMins = (new Date() - creadoEn) / 1000 / 60;
 
     if (reserva.estado === 'CANCELADA' || diffMins > 10) {
