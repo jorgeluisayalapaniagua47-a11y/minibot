@@ -115,9 +115,9 @@ app.post('/webhook', async (req, res) => {
     const wa_message_id = messageObj.id;
     const entryId = body.entry[0].id;
 
-    res.status(200).send("EVENT_RECEIVED");
-
-    if (messageObj.from_user_id === entryId || !text) return;
+    if (messageObj.from_user_id === entryId || !text) {
+        return res.status(200).send("EVENT_RECEIVED");
+    }
 
     try {
         // Upsert contacto
@@ -362,6 +362,10 @@ app.post('/webhook', async (req, res) => {
 
     } catch (err) {
         console.error("Error procesando Webhook:", err);
+    } finally {
+        if (!res.headersSent) {
+            res.status(200).send("EVENT_RECEIVED");
+        }
     }
 });
 
@@ -482,4 +486,8 @@ app.get('/crm', (req, res) => {
     res.sendFile(path.join(__dirname, 'crm.html'));
 });
 
-app.listen(PORT, () => console.log(`MiniBot en http://localhost:${PORT}`));
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => console.log(`MiniBot en http://localhost:${PORT}`));
+}
+
+module.exports = app;
