@@ -36,8 +36,8 @@ async function getGenerosMenu() {
 // ----------------------------------------------------
 function normalizarTelefonoWhatsApp(telefono) {
     if (!telefono) return '';
-    const limpio = String(telefono).trim().replace(/\s+/g, '');
-    return limpio.startsWith('+') ? limpio : `+${limpio}`;
+    // Meta API requiere el número SIN el signo +
+    return String(telefono).trim().replace(/[\s+]+/g, '');
 }
 
 
@@ -619,4 +619,7 @@ app.get('/api/solicitudes', async (req, res) => {
 app.get('/crm', (req, res) => {
     res.sendFile(path.join(__dirname, 'crm.html'));
 });
-app.listen(PORT, () => console.log(`MiniBot en http://localhost:${PORT}`));
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => console.log(`MiniBot en http://localhost:${PORT}`));
+}
+module.exports = app;
